@@ -319,4 +319,4 @@ def extract_role(messages):
 init_session()
 
 if __name__ == '__main__':
-    app.run(port=9876, debug=True)
+    app.run(port=9876)

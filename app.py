@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, Response
-from curl_cffi import requests
+import requests
 import time
 import json
 import uuid
@@ -26,7 +26,7 @@ MODEL_MAP = {}
 DYNAMIC_COOKIES = ""
 CONVERSATION_ID = ""
 
-session = requests.Session(impersonate="chrome120")
+session = requests.Session()
 
 def init_session():
     global DYNAMIC_COOKIES, MODEL_MAP, CONVERSATION_ID, DEPLOYMENT_ID
@@ -319,4 +319,4 @@ def extract_role(messages):
 init_session()
 
 if __name__ == '__main__':
-    app.run(port=9876)
+    app.run(port=9876, debug=True)

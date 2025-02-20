@@ -181,7 +181,7 @@ def send_message(message, model):
                         
                         except json.JSONDecodeError:
                             print(f"Failed to decode line: {decoded_line}")
-                print("---------- Response End ----------")
+                print("\n---------- Response End ----------")
                 yield f"data: [DONE]\n\n"
             except Exception as e:
                 print(f"Failed to send message: {e}")
@@ -242,7 +242,7 @@ def send_message_non_stream(message, model):
                         buffer.write(segment)
                     except json.JSONDecodeError:
                         print(f"Failed to decode line: {decoded_line}")
-            print("---------- Response End ----------")
+            print("\n---------- Response End ----------")
             openai_response = {
                 "id": "chatcmpl-" + str(uuid.uuid4()),
                 "object": "chat.completion",

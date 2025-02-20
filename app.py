@@ -7,14 +7,10 @@ import random
 import io
 import re
 
-
 app = Flask(__name__)
 
 API_ENDPOINT_URL = "https://abacus.ai/api/v0/describeDeployment"
 MODEL_LIST_URL = "https://abacus.ai/api/v0/listExternalApplications"
-CREATE_CONVERSATION_PREPARATION_URL_1 = "https://pa002.abacus.ai/cluster-proxy/api/_fetchToolbarActions?"
-CREATE_CONVERSATION_PREPARATION_URL_2 = "https://pa002.abacus.ai/cluster-proxy/api/_getCustomChatInstructions?"
-CREATE_CONVERSATION_URL = "http://pa002.abacus.ai/cluster-proxy/api/createDeploymentConversation"
 TARGET_URL = "https://pa002.abacus.ai/api/_chatLLMSendMessageSSE"
 
 USER_AGENTS = [
@@ -23,17 +19,20 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
+DEPLOYMENT_ID = ""
+MODEL_MAP = {}
 
 # below data should be updated by user
 DYNAMIC_COOKIES = ""
-MODEL_MAP = {}
+CONVERSATION_ID = ""
 
 session = requests.Session(impersonate="chrome120")
 
 def init_session():
-    global DYNAMIC_COOKIES, MODEL_MAP
+    global DYNAMIC_COOKIES, MODEL_MAP, CONVERSATION_ID, DEPLOYMENT_ID
     config = json.loads(open("config.json").read())
     DYNAMIC_COOKIES = config['cookies']
+    CONVERSATION_ID = config['conversationId']
     headers = {
         'authority': 'abacus.ai',
         'method': 'POST',
@@ -67,10 +66,11 @@ def init_session():
         response_data = response.json()
         if response_data.get('success') is True:
             for data in response_data['result']:
-                ids = config['conversationId']
-                conversationId = ids.get(data['name'], None)
-                if conversationId is not None:
-                    MODEL_MAP[data['name']] = (data['deploymentId'], data['externalApplicationId'], data['predictionOverrides']['llmName'], conversationId)
+                if DEPLOYMENT_ID == "":
+                    DEPLOYMENT_ID = data['deploymentId']
+                if data['deploymentId'] != DEPLOYMENT_ID:
+                    continue
+                MODEL_MAP[data['name']] = (data['externalApplicationId'], data['predictionOverrides']['llmName'])
             print("Model map updated")
         else:
             print(f"Failed to update model map: {response_data.get('error')}")
@@ -138,15 +138,15 @@ def send_message(message, model):
     }
     payload = {
         "requestId": str(uuid.uuid4()),
-        "deploymentConversationId": MODEL_MAP[model][3],
+        "deploymentConversationId": CONVERSATION_ID,
         "message": message,
         "isDesktop": True,
         "chatConfig": {
             "timezone": "Asia/Shanghai",
             "language": "zh-CN"
         },
-        "llmName": MODEL_MAP[model][2],
-        "externalApplicationId": MODEL_MAP[model][1],
+        "llmName": MODEL_MAP[model][1],
+        "externalApplicationId": MODEL_MAP[model][0],
         "regenerate": True,
         "editPrompt": True,
     }
@@ -214,15 +214,15 @@ def send_message_non_stream(message, model):
     }
     payload = {
         "requestId": str(uuid.uuid4()),
-        "deploymentConversationId": MODEL_MAP[model][3],
+        "deploymentConversationId": CONVERSATION_ID,
         "message": message,
         "isDesktop": True,
         "chatConfig": {
             "timezone": "Asia/Shanghai",
             "language": "zh-CN"
         },
-        "llmName": MODEL_MAP[model][2],
-        "externalApplicationId": MODEL_MAP[model][1],
+        "llmName": MODEL_MAP[model][1],
+        "externalApplicationId": MODEL_MAP[model][0],
         "regenerate": True,
         "editPrompt": True,
     }

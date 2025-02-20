@@ -136,7 +136,6 @@ def send_message(message, model):
         'user-agent': random.choice(USER_AGENTS),
         'x-abacus-org-host': 'apps'
     }
-    message = open("test_long_message.txt", encoding="utf-8").read()
     payload = {
         "requestId": str(uuid.uuid4()),
         "deploymentConversationId": MODEL_MAP[model][3],

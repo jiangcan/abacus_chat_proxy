@@ -83,7 +83,7 @@ def update_cookie():
     global DYNAMIC_COOKIES
     cookie_jar = {}
     for key, value in session.cookies.items():
-        cookie_jar[key] = '"' + value + '"'
+        cookie_jar[key] = value
     cookie_dict = {}
     for item in DYNAMIC_COOKIES.split(';'):
         key, value = item.strip().split('=', 1)

@@ -19,84 +19,97 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
-DEPLOYMENT_ID = ""
-MODEL_MAP = {}
+USER_NUM = 0
+USER_DATA = []
+CURRENT_USER = -1
+MODELS = set()
 
-# below data should be updated by user
-DYNAMIC_COOKIES = ""
-CONVERSATION_ID = ""
-
-session = requests.Session()
+def resolve_config():
+    with open("config.json", "r") as f:
+        config = json.load(f)
+    config_list = config.get('config')
+    return config_list
 
 def init_session():
-    global DYNAMIC_COOKIES, MODEL_MAP, CONVERSATION_ID, DEPLOYMENT_ID
-    config = json.loads(open("config.json").read())
-    DYNAMIC_COOKIES = config['cookies']
-    CONVERSATION_ID = config['conversationId']
-    headers = {
-        'authority': 'abacus.ai',
-        'method': 'POST',
-        'path': '/api/v0/listExternalApplications',
-        'scheme': 'https',
-        'accept': 'application/json, text/plain, */*',
-        'accept-encoding': 'gzip, deflate, br, zstd',
-        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'cache-control': 'no-cache',
-        'cookie': DYNAMIC_COOKIES,
-        'origin': 'https://apps.abacus.ai',
-        'pragma': 'no-cache',
-        'priority': 'u=1, i',
-        'reai-ui': '1',
-        'referer': 'https://apps.abacus.ai/',
-        'sec-ch-ua': '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-site',
-        'user-agent': random.choice(USER_AGENTS),
-        'x-abacus-org-host': 'apps'
-    }
-    payload = {"includeSearchLlm":True}
-    try:
-        response = session.post(MODEL_LIST_URL, headers=headers, json=payload)
-        response.raise_for_status()
-        update_cookie()
-        print(f"Updated cookies: {DYNAMIC_COOKIES}")
-        response_data = response.json()
-        if response_data.get('success') is True:
-            for data in response_data['result']:
-                if DEPLOYMENT_ID == "":
-                    DEPLOYMENT_ID = data['deploymentId']
-                if data['deploymentId'] != DEPLOYMENT_ID:
-                    continue
-                MODEL_MAP[data['name']] = (data['externalApplicationId'], data['predictionOverrides']['llmName'])
-            print("Model map updated")
-        else:
-            print(f"Failed to update model map: {response_data.get('error')}")
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to update model map: {e}")
-        return None
-    return True
+    global USER_NUM, MODELS, USER_DATA
+    config_list = resolve_config()
+    user_num = len(config_list)
+    for i in range(user_num):
+        user = config_list[i]
+        cookies = user.get('cookies')
+        conversation_id = user.get('conversation_id')
+        session = requests.Session()
+        headers = {
+            'authority': 'abacus.ai',
+            'method': 'POST',
+            'path': '/api/v0/listExternalApplications',
+            'scheme': 'https',
+            'accept': 'application/json, text/plain, */*',
+            'accept-encoding': 'gzip, deflate, br, zstd',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'cache-control': 'no-cache',
+            'cookie': cookies,
+            'origin': 'https://apps.abacus.ai',
+            'pragma': 'no-cache',
+            'priority': 'u=1, i',
+            'reai-ui': '1',
+            'referer': 'https://apps.abacus.ai/',
+            'sec-ch-ua': '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': random.choice(USER_AGENTS),
+            'x-abacus-org-host': 'apps'
+        }
+        payload = {"includeSearchLlm":False}
+        try:
+            response = session.post(MODEL_LIST_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            cookies = update_cookie(session, cookies)
+            print(f"Updated cookies {i+1}: {cookies}")
+            response_data = response.json()
+            if response_data.get('success') is True:
+                model_map = {}
+                for data in response_data['result']:
+                    model_map[data['name']] = (data['externalApplicationId'], data['predictionOverrides']['llmName'])
+                print(f"Model map updated for cookie {i+1}")
+                USER_DATA.append((session, cookies, conversation_id, model_map))
+            else:
+                print(f"Failed to update model map for cookie {i+1}: {response_data.get('error')}")
+                continue
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to update model map for cookie {i+1}: {e}")
+            continue
+    USER_NUM = len(USER_DATA)
+    if USER_NUM == 0:
+        print("No user available, exiting...")
+        exit(1)
+    model_map = USER_DATA[0][3]
+    MODELS = set(model_map.keys())
+    print(f"running for {USER_NUM} users")
 
-def update_cookie():
-    global DYNAMIC_COOKIES
+def update_cookie(session, cookies):
     cookie_jar = {}
     for key, value in session.cookies.items():
         cookie_jar[key] = value
     cookie_dict = {}
-    for item in DYNAMIC_COOKIES.split(';'):
+    for item in cookies.split(';'):
         key, value = item.strip().split('=', 1)
         cookie_dict[key] = value
     cookie_dict.update(cookie_jar)
-    DYNAMIC_COOKIES = '; '.join([f"{key}={value}" for key, value in cookie_dict.items()])
+    cookies = '; '.join([f"{key}={value}" for key, value in cookie_dict.items()])
+    return cookies
+
+user_data = init_session()
 
 @app.route('/v1/models', methods=['GET'])
 def get_models():
-    if len(MODEL_MAP) == 0:
+    if len(MODELS) == 0:
         return jsonify({"error": "No models available"}), 500
     model_list = []
-    for model in MODEL_MAP:
+    for model in MODELS:
         model_list.append({"id": model, "object": "model", "created": int(time.time()), "owned_by": "Elbert", "name": model})
     return jsonify({"object": "list", "data": model_list})
 
@@ -108,13 +121,19 @@ def chat_completions():
     if messages is None:
         return jsonify({"error": "Messages is required"}), 400
     model = openai_request.get('model')
-    if_model_available = MODEL_MAP.get(model, False)
-    if if_model_available is False:
+    if model not in MODELS:
         return jsonify({"error": "Model not available, check if it is configured properly"}), 500
     message = format_message(messages)
     return send_message(message, model) if stream else send_message_non_stream(message, model)
 
+def get_user_data():
+    global CURRENT_USER
+    CURRENT_USER = (CURRENT_USER + 1) % USER_NUM
+    print(f"Using cookie {CURRENT_USER+1}")
+    return USER_DATA[CURRENT_USER]
+
 def send_message(message, model):
+    (session, cookies, conversation_id, model_map) = get_user_data()
     headers = {
         'accept': 'text/event-stream',
         'accept-encoding': 'gzip, deflate, br, zstd',
@@ -122,7 +141,7 @@ def send_message(message, model):
         'cache-control': 'no-cache',
         'connection': 'keep-alive',
         'content-type': 'text/plain;charset=UTF-8',
-        'cookie': DYNAMIC_COOKIES,
+        'cookie': cookies,
         'host': 'pa002.abacus.ai',
         'origin': 'https://apps.abacus.ai',
         'pragma': 'no-cache',
@@ -138,15 +157,15 @@ def send_message(message, model):
     }
     payload = {
         "requestId": str(uuid.uuid4()),
-        "deploymentConversationId": CONVERSATION_ID,
+        "deploymentConversationId": conversation_id,
         "message": message,
         "isDesktop": True,
         "chatConfig": {
             "timezone": "Asia/Shanghai",
             "language": "zh-CN"
         },
-        "llmName": MODEL_MAP[model][1],
-        "externalApplicationId": MODEL_MAP[model][0],
+        "llmName": model_map[model][1],
+        "externalApplicationId": model_map[model][0],
         "regenerate": True,
         "editPrompt": True,
     }
@@ -193,13 +212,14 @@ def send_message(message, model):
         return jsonify({"error": "Failed to send message"}), 500
 
 def send_message_non_stream(message, model):
+    (session, cookies, conversation_id, model_map) = get_user_data()
     headers = {
         'accept': 'application/json, text/plain, */*',
         'accept-encoding': 'gzip, deflate, br, zstd',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'cache-control': 'no-cache',
         'content-type': 'application/json;charset=UTF-8',
-        'cookie': DYNAMIC_COOKIES,
+        'cookie': cookies,
         'origin': 'https://apps.abacus.ai',
         'pragma': 'no-cache',
         'referer': 'https://apps.abacus.ai/',
@@ -214,15 +234,15 @@ def send_message_non_stream(message, model):
     }
     payload = {
         "requestId": str(uuid.uuid4()),
-        "deploymentConversationId": CONVERSATION_ID,
+        "deploymentConversationId": conversation_id,
         "message": message,
         "isDesktop": True,
         "chatConfig": {
             "timezone": "Asia/Shanghai",
             "language": "zh-CN"
         },
-        "llmName": MODEL_MAP[model][1],
-        "externalApplicationId": MODEL_MAP[model][0],
+        "llmName": model_map[model][1],
+        "externalApplicationId": model_map[model][0],
         "regenerate": True,
         "editPrompt": True,
     }
@@ -316,7 +336,5 @@ def extract_role(messages):
         print(f"Using prefix: {prefix}")
     return (role_map, prefix, messages)
 
-init_session()
-
 if __name__ == '__main__':
-    app.run(port=9876)
+    app.run(port=9876, debug=True)

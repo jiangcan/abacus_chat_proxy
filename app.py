@@ -337,4 +337,4 @@ def extract_role(messages):
     return (role_map, prefix, messages)
 
 if __name__ == '__main__':
-    app.run(port=9876, debug=True)
+    app.run(port=9876)

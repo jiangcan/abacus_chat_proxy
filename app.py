@@ -6,6 +6,8 @@ import uuid
 import random
 import io
 import re
+from functools import wraps
+import hashlib
 
 app = Flask(__name__)
 
@@ -19,6 +21,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
+PASSWORD = None
 USER_NUM = 0
 USER_DATA = []
 CURRENT_USER = -1
@@ -30,6 +33,33 @@ def resolve_config():
         config = json.load(f)
     config_list = config.get("config")
     return config_list
+
+
+def get_password():
+    global PASSWORD
+    try:
+        with open("password.txt", "r") as f:
+            PASSWORD = f.read().strip()
+    except FileNotFoundError:
+        with open("password.txt", "w") as f:
+            PASSWORD = None
+
+
+def require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not PASSWORD:
+            return f(*args, **kwargs)
+        auth = request.authorization
+        if not auth or not check_auth(auth.token):
+            return jsonify({"error": "Unauthorized access"}), 401
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+def check_auth(token):
+    return hashlib.sha256(token.encode()).hexdigest() == PASSWORD
 
 
 def init_session():
@@ -115,6 +145,7 @@ user_data = init_session()
 
 
 @app.route("/v1/models", methods=["GET"])
+@require_auth
 def get_models():
     if len(MODELS) == 0:
         return jsonify({"error": "No models available"}), 500
@@ -133,6 +164,7 @@ def get_models():
 
 
 @app.route("/v1/chat/completions", methods=["POST"])
+@require_auth
 def chat_completions():
     openai_request = request.get_json()
     stream = openai_request.get("stream", False)

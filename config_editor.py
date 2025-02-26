@@ -30,7 +30,7 @@ if __name__ == "__main__":
         print(f"3. Edit")
         print(f"4. Delete")
         print(f"5. Set password")
-        print(f"5. Exit")
+        print(f"6. Exit")
         choice = input()
         if choice == "1":
             print(f"Enter the conversation id you got: ")

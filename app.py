@@ -63,6 +63,7 @@ def check_auth(token):
 
 
 def init_session():
+    get_password()
     global USER_NUM, MODELS, USER_DATA
     config_list = resolve_config()
     user_num = len(config_list)

@@ -4,6 +4,8 @@ import hashlib
 
 if __name__ == "__main__":
     config = None
+    path = os.path.dirname(os.path.realpath(__file__))
+    os.chdir(path)
     if os.path.exists("config.json"):
         with open("config.json", "r") as f:
             config = json.load(f)
@@ -30,7 +32,7 @@ if __name__ == "__main__":
         print(f"3. Edit")
         print(f"4. Delete")
         print(f"5. Set password")
-        print(f"6. Exit")
+        print(f"6. Save and exit")
         choice = input()
         if choice == "1":
             print(f"Enter the conversation id you got: ")

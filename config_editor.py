@@ -28,11 +28,9 @@ if __name__ == "__main__":
             print(f"You have {num} cookies in your config.json file.")
         print("----------")
         print(f"1. Add")
-        print(f"2. Check")
-        print(f"3. Edit")
-        print(f"4. Delete")
-        print(f"5. Set password")
-        print(f"6. Save and exit")
+        print(f"2. Delete all")
+        print(f"3. Set password")
+        print(f"4. Save and exit")
         choice = input()
         if choice == "1":
             print(f"Enter the conversation id you got: ")
@@ -42,25 +40,9 @@ if __name__ == "__main__":
             config["config"].append(user_data)
             again = True
         elif choice == "2":
-            print(f"Enter the index of the cookies you want to check: ")
-            index = int(input())
-            print(f"conversation id: {config['config'][index-1]['conversation_id']}")
-            print(f"cookies: {config['config'][index-1]['cookies']}")
-            again = False
-        elif choice == "3":
-            print(f"Enter the index of the cookies you want to edit: ")
-            index = int(input())
-            print(f"Enter the new conversation id: ")
-            config["config"][index - 1]["conversation_id"] = input()
-            print(f"Enter the new cookies: ")
-            config["config"][index - 1]["cookies"] = input()
-            again = False
-        elif choice == "4":
-            print(f"Enter the index of the cookies you want to delete: ")
-            index = int(input())
-            config["config"].pop(index - 1)
+            config["config"] = []
             again = True
-        elif choice == "5":
+        elif choice == "3":
             print(f"Enter the password, blank to remove: ")
             password = input()
             with open("password.txt", "w") as f:
@@ -70,7 +52,7 @@ if __name__ == "__main__":
                 else:
                     f.write("")
                     print(f"Password removed.")
-        elif choice == "6":
+        elif choice == "4":
             with open("config.json", "w") as f:
                 json.dump(config, f, indent=4)
             break

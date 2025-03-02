@@ -184,10 +184,13 @@ def chat_completions():
             404,
         )
     message = format_message(messages)
+    think = (
+        openai_request.get("think", False) if model == "Claude Sonnet 3.7" else False
+    )
     return (
-        send_message(message, model)
+        send_message(message, model, think)
         if stream
-        else send_message_non_stream(message, model)
+        else send_message_non_stream(message, model, think)
     )
 
 
@@ -198,7 +201,7 @@ def get_user_data():
     return USER_DATA[CURRENT_USER]
 
 
-def send_message(message, model):
+def send_message(message, model, think=False):
     (session, cookies, conversation_id, model_map) = get_user_data()
     headers = {
         "accept": "text/event-stream",
@@ -232,6 +235,9 @@ def send_message(message, model):
         "regenerate": True,
         "editPrompt": True,
     }
+    if think:
+        print("Using thinking...")
+        payload["useThinking"] = think
     try:
         response = session.post(TARGET_URL, headers=headers, json=payload, stream=True)
         response.raise_for_status()
@@ -269,13 +275,108 @@ def send_message(message, model):
                 print(f"Failed to send message: {e}")
                 yield f'data: {{"error": "{e}"}}\n\n'
 
-        return Response(generate(), content_type="text/event-stream")
+        def generate_think():
+            time.sleep(2)
+            try:
+                print("---------- Response ----------")
+                id = ""
+                think = 2
+                for line in response.iter_lines():
+                    if line:
+                        decoded_line = line.decode("utf-8")
+                        try:
+                            data = json.loads(decoded_line)
+                            if data.get("type") != "text":
+                                continue
+                            elif think == 2:
+                                id = data.get("messageId")
+                                segment = "<think>\n" + data.get("segment", "")
+                                print(segment, end="")
+                                openai_chunk = {
+                                    "id": "chatcmpl-" + str(uuid.uuid4()),
+                                    "object": "chat.completion.chunk",
+                                    "created": int(time.time()),
+                                    "model": model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": {"content": segment},
+                                            "finish_reason": None,
+                                        }
+                                    ],
+                                }
+                                yield f"data: {json.dumps(openai_chunk)}\n\n"
+                                think = 1
+                            elif think == 1:
+                                if data.get("messageId") != id:
+                                    segment = data.get("segment", "")
+                                    print(segment, end="")
+                                    openai_chunk = {
+                                        "id": "chatcmpl-" + str(uuid.uuid4()),
+                                        "object": "chat.completion.chunk",
+                                        "created": int(time.time()),
+                                        "model": model,
+                                        "choices": [
+                                            {
+                                                "index": 0,
+                                                "delta": {"content": segment},
+                                                "finish_reason": None,
+                                            }
+                                        ],
+                                    }
+                                    yield f"data: {json.dumps(openai_chunk)}\n\n"
+                                else:
+                                    segment = "\n</think>\n" + data.get("segment", "")
+                                    print(segment, end="")
+                                    openai_chunk = {
+                                        "id": "chatcmpl-" + str(uuid.uuid4()),
+                                        "object": "chat.completion.chunk",
+                                        "created": int(time.time()),
+                                        "model": model,
+                                        "choices": [
+                                            {
+                                                "index": 0,
+                                                "delta": {"content": segment},
+                                                "finish_reason": None,
+                                            }
+                                        ],
+                                    }
+                                    yield f"data: {json.dumps(openai_chunk)}\n\n"
+                                    think = 0
+                            else:
+                                segment = data.get("segment", "")
+                                print(segment, end="")
+                                openai_chunk = {
+                                    "id": "chatcmpl-" + str(uuid.uuid4()),
+                                    "object": "chat.completion.chunk",
+                                    "created": int(time.time()),
+                                    "model": model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": {"content": segment},
+                                            "finish_reason": None,
+                                        }
+                                    ],
+                                }
+                                yield f"data: {json.dumps(openai_chunk)}\n\n"
+                        except json.JSONDecodeError:
+                            print(f"Failed to decode line: {decoded_line}")
+                print("\n---------- Response End ----------")
+                yield f"data: [DONE]\n\n"
+            except Exception as e:
+                print(f"Failed to send message: {e}")
+                yield f'data: {{"error": "{e}"}}\n\n'
+
+        return Response(
+            generate_think() if think else generate(), content_type="text/event-stream"
+        )
     except requests.exceptions.RequestException as e:
         print(f"Failed to send message: {e}")
         return jsonify({"error": "Failed to send message"}), 500
 
 
-def send_message_non_stream(message, model):
+def send_message_non_stream(message, model, think=False):
     (session, cookies, conversation_id, model_map) = get_user_data()
     headers = {
         "accept": "application/json, text/plain, */*",
@@ -307,22 +408,58 @@ def send_message_non_stream(message, model):
         "regenerate": True,
         "editPrompt": True,
     }
+    if think:
+        print("Using thinking...")
+        payload["useThinking"] = think
     try:
         response = session.post(TARGET_URL, headers=headers, json=payload, stream=True)
         response.raise_for_status()
         buffer = io.StringIO()
         try:
             print("---------- Response ----------")
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode("utf-8")
-                    try:
-                        data = json.loads(decoded_line)
-                        segment = data.get("segment", "")
-                        print(segment, end="")
-                        buffer.write(segment)
-                    except json.JSONDecodeError:
-                        print(f"Failed to decode line: {decoded_line}")
+            if think:
+                id = ""
+                think = 2
+                for line in response.iter_lines():
+                    if line:
+                        decoded_line = line.decode("utf-8")
+                        try:
+                            data = json.loads(decoded_line)
+                            if data.get("type") != "text":
+                                continue
+                            elif think == 2:
+                                id = data.get("messageId")
+                                segment = "<think>\n" + data.get("segment", "")
+                                print(segment, end="")
+                                buffer.write(segment)
+                                think = 1
+                            elif think == 1:
+                                if data.get("messageId") != id:
+                                    segment = data.get("segment", "")
+                                    print(segment, end="")
+                                    buffer.write(segment)
+                                else:
+                                    segment = "\n<\think>\n" + data.get("segment", "")
+                                    print(segment, end="")
+                                    buffer.write(segment)
+                                    think = 0
+                            else:
+                                segment = data.get("segment", "")
+                                print(segment, end="")
+                                buffer.write(segment)
+                        except json.JSONDecodeError:
+                            print(f"Failed to decode line: {decoded_line}")
+            else:
+                for line in response.iter_lines():
+                    if line:
+                        decoded_line = line.decode("utf-8")
+                        try:
+                            data = json.loads(decoded_line)
+                            segment = data.get("segment", "")
+                            print(segment, end="")
+                            buffer.write(segment)
+                        except json.JSONDecodeError:
+                            print(f"Failed to decode line: {decoded_line}")
             print("\n---------- Response End ----------")
             openai_response = {
                 "id": "chatcmpl-" + str(uuid.uuid4()),
@@ -398,4 +535,4 @@ def extract_role(messages):
 
 
 if __name__ == "__main__":
-    app.run(port=9876)
+    app.run(port=9876, host="0.0.0.0")

@@ -52,39 +52,44 @@ cls
 echo ================================
 echo        Abacus Chat Proxy
 echo ================================
-echo [0] 配置代理 (运行config_editor)
-echo [1] 启动代理 (运行app.py)
+echo [0] Configure Proxy (run config_editor)
+echo [1] Start Proxy (run app.py)
 echo ================================
-set /p choice="请选择操作 (0/1): "
+set /p choice="Please select an option (0/1): "
 
 if "%choice%"=="0" (
-    echo 启动配置程序...
+    echo Starting configuration program...
     python config_editor.py
     if errorlevel 1 (
-        echo 配置程序运行失败，请检查错误信息。
+        echo Configuration program failed, please check the error message.
         pause
         exit /b
     )
-    echo 配置完成，是否要立即启动代理？(Y/N)
-    set /p start_proxy="输入选择: "
-    if /i "%start_proxy%"=="Y" goto start_proxy
-    goto menu
+    echo Configuration complete, do you want to start the proxy now? (Y/N)
+    set /p start_now="Do you want to start the proxy now? (Y/N),enter your choice: "
+    if /i "%start_now%"=="Y" (
+        goto run_proxy
+    ) else (
+        goto menu
+    )
 )
 
 if "%choice%"=="1" (
-    :start_proxy
-    echo 启动代理服务器...
-    python app.py
-    if errorlevel 1 (
-        echo 代理服务器启动失败，请检查错误信息。
-        pause
-        exit /b
-    )
-    echo 代理服务器正在运行: http://127.0.0.1:9876/
+    goto run_proxy
+)
+
+echo Invalid choice, please try again!
+timeout /t 2 > nul
+goto menu
+
+:run_proxy
+echo Starting proxy server...
+python app.py
+if errorlevel 1 (
+    echo Proxy server failed to start, please check the error message.
     pause
     exit /b
 )
-
-echo 无效的选择，请重试！
-timeout /t 2 > nul
-goto menu
+echo Proxy server is running: http://127.0.0.1:9876/
+pause
+exit /b

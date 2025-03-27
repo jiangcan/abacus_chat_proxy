@@ -1,78 +1,78 @@
 #!/bin/bash
 
-# 设置错误时退出
+# Exit on error
 set -e
 
-# 检查Python是否安装
-echo "检查Python版本..."
+# Check if Python is installed
+echo "checking Python version..."
 if ! command -v python3 &> /dev/null; then
-    echo "未找到Python。请安装Python 3并确保其在PATH中。"
+    echo "No Python found. Please install Python 3 and ensure it's in your PATH."
     exit 1
 fi
 
-# 检查pip是否安装
-echo "检查pip版本..."
+# Check if pip is installed
+echo "checking pip version..."
 if ! command -v pip3 &> /dev/null; then
-    echo "未找到pip。请安装pip。"
+    echo "No pip found. Please install pip."
     exit 1
 fi
 
-# 创建虚拟环境（如果不存在）
-echo "检查虚拟环境..."
+# Create virtual environment (if it doesn't exist)
+echo "checking virtual environment..."
 if [ ! -d "venv" ]; then
-    echo "创建虚拟环境..."
+    echo "creating virtual environment..."
     python3 -m venv venv
 fi
 
-# 激活虚拟环境
-echo "激活虚拟环境..."
+# Activate virtual environment
+echo "activating virtual environment..."
 source venv/bin/activate || {
-    echo "激活虚拟环境失败，尝试在全局环境安装依赖..."
+    echo "Failed to activate virtual environment, trying to install dependencies in global environment..."
 }
 
-# 安装依赖
-echo "安装依赖..."
+# Install dependencies
+echo "installing dependencies..."
 pip install -r requirements.txt || {
-    echo "安装依赖失败。请检查网络连接并重试。"
+    echo "Failed to install dependencies. Please check your network connection and try again."
     exit 1
 }
 
-echo "依赖安装完成。"
+echo "dependencies installed."
 
-# 菜单函数
+# Menu function
 show_menu() {
     clear
     echo "================================"
     echo "        Abacus Chat Proxy"
     echo "================================"
-    echo "[0] 配置代理 (运行config_editor)"
-    echo "[1] 启动代理 (运行app.py)"
+    echo "[0] Configure Proxy (run config_editor)"
+    echo "[1] Start Proxy (run app.py)"
     echo "================================"
 }
 
-# 启动代理函数
+# Start proxy function
 start_proxy() {
-    echo "启动代理服务器..."
+    echo "Starting proxy server..."
     python app.py || {
-        echo "代理服务器启动失败，请检查错误信息。"
+        echo "Proxy server failed to start, please check the error message."
         exit 1
     }
 }
 
-# 主循环
+# Main loop
 while true; do
     show_menu
-    read -p "请选择操作 (0/1): " choice
+    read -p "Please select an option (0/1): " choice
     
     case $choice in
         0)
-            echo "启动配置程序..."
+            echo "Starting configuration program..."
             python config_editor.py || {
-                echo "配置程序运行失败，请检查错误信息。"
+                echo "Configuration program failed, please check the error message."
                 exit 1
             }
-            echo "配置完成，是否要立即启动代理？(Y/N)"
-            read -p "输入选择: " start_proxy_choice
+            echo "Configuration complete, do you want to start the proxy now? (Y/N)"
+            read -p "Enter your choice: " start_proxy_choice
             case $start_proxy_choice in
                 [Yy]*)
                     start_proxy
@@ -88,11 +88,11 @@ while true; do
             break
             ;;
         *)
-            echo "无效的选择，请重试！"
+            echo "Invalid choice, please try again!"
             sleep 2
             ;;
     esac
 done
 
-# 捕获中断信号（Ctrl+C）和终止信号
+# Catch interrupt signal (Ctrl+C) and termination signal
 trap "exit" INT TERM 

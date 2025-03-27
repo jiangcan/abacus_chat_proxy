@@ -32,10 +32,6 @@ CURRENT_USER = -1
 MODELS = set()
 
 
-TRACE_ID = "3042e28b3abf475d8d973c7e904935af"
-SENTRY_TRACE = f"{TRACE_ID}-80d9d2538b2682d0"
-
-
 def resolve_config():
     with open("config.json", "r") as f:
         config = json.load(f)

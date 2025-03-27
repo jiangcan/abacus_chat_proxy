@@ -17,6 +17,7 @@ API_ENDPOINT_URL = "https://abacus.ai/api/v0/describeDeployment"
 MODEL_LIST_URL = "https://abacus.ai/api/v0/listExternalApplications"
 CHAT_URL = "https://apps.abacus.ai/api/_chatLLMSendMessageSSE"
 USER_INFO_URL = "https://abacus.ai/api/v0/_getUserInfo"
+CREATE_CONVERSATION_URL = "https://apps.abacus.ai/api/createDeploymentConversation"
 
 
 USER_AGENTS = [
@@ -197,6 +198,33 @@ def get_model_map(session, cookies, session_token):
         raise
 
 
+def save_config(config_data):
+    """保存配置到文件"""
+    try:
+        with open("config.json", "w") as f:
+            json.dump(config_data, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"保存配置文件失败: {e}")
+        return False
+
+
+def update_conversation_id(user_index, conversation_id):
+    """更新用户的conversation_id并保存到配置文件"""
+    try:
+        with open("config.json", "r") as f:
+            config = json.load(f)
+        
+        if "config" in config and user_index < len(config["config"]):
+            config["config"][user_index]["conversation_id"] = conversation_id
+            save_config(config)
+            print(f"已将用户 {user_index+1} 的conversation_id更新为: {conversation_id}")
+        else:
+            print(f"更新conversation_id失败: 配置文件格式错误或用户索引越界")
+    except Exception as e:
+        print(f"更新conversation_id失败: {e}")
+
+
 def init_session():
     get_password()
     global USER_NUM, MODELS, USER_DATA
@@ -207,7 +235,7 @@ def init_session():
     for i in range(user_num):
         user = config_list[i]
         cookies = user.get("cookies")
-        conversation_id = user.get("conversation_id")
+        conversation_id = user.get("conversation_id")  # 从配置中读取，可能为None
         session = requests.Session()
         
         session_token = refresh_token(session, cookies)
@@ -218,7 +246,7 @@ def init_session():
         try:
             model_map, models_set = get_model_map(session, cookies, session_token)
             all_models.update(models_set)
-            USER_DATA.append((session, cookies, session_token, conversation_id, model_map))
+            USER_DATA.append((session, cookies, session_token, conversation_id, model_map, i))  # 保存用户的索引
         except Exception as e:
             print(f"配置用户 {i+1} 失败: {e}")
             continue
@@ -297,13 +325,112 @@ def chat_completions():
     )
 
 
+def create_conversation(session, cookies, session_token, external_application_id=None, deployment_id=None):
+    """创建新的会话"""
+    if not (external_application_id and deployment_id):
+        print("无法创建新会话: 缺少必要参数")
+        return None
+    
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "content-type": "application/json",
+        "cookie": cookies,
+        "user-agent": random.choice(USER_AGENTS),
+        "x-abacus-org-host": "apps"
+    }
+    
+    if session_token:
+        headers["session-token"] = session_token
+    
+    create_payload = {
+        "deploymentId": deployment_id,
+        "name": "New Chat",
+        "externalApplicationId": external_application_id
+    }
+    
+    try:
+        response = session.post(
+            CREATE_CONVERSATION_URL,
+            headers=headers,
+            json=create_payload
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success", False):
+                new_conversation_id = data.get("result", {}).get("deploymentConversationId")
+                if new_conversation_id:
+                    print(f"成功创建新的conversation: {new_conversation_id}")
+                    return new_conversation_id
+        
+        print(f"创建会话失败: {response.status_code} - {response.text[:100]}")
+        return None
+    except Exception as e:
+        print(f"创建会话时出错: {e}")
+        return None
+
+
+def is_conversation_valid(session, cookies, session_token, conversation_id, model_map, model):
+    """检查会话ID是否有效"""
+    if not conversation_id:
+        return False
+    
+    # 如果没有这些信息，无法验证
+    if not (model in model_map and len(model_map[model]) >= 2):
+        return False
+        
+    external_app_id = model_map[model][0]
+    
+    # 尝试发送一个空消息来测试会话ID是否有效
+    headers = {
+        "accept": "text/event-stream",
+        "content-type": "text/plain;charset=UTF-8",
+        "cookie": cookies,
+        "user-agent": random.choice(USER_AGENTS)
+    }
+    
+    if session_token:
+        headers["session-token"] = session_token
+    
+    payload = {
+        "requestId": str(uuid.uuid4()),
+        "deploymentConversationId": conversation_id,
+        "message": "",  # 空消息
+        "isDesktop": False,
+        "externalApplicationId": external_app_id
+    }
+    
+    try:
+        response = session.post(
+            CHAT_URL,
+            headers=headers,
+            data=json.dumps(payload),
+            stream=False
+        )
+        
+        # 即使返回错误，只要不是缺少ID的错误，也说明ID是有效的
+        if response.status_code == 200:
+            return True
+        
+        error_text = response.text
+        if "Missing required parameter" in error_text:
+            return False
+            
+        # 其他类型的错误，可能ID是有效的但有其他问题
+        return True
+    except:
+        # 如果请求出错，无法确定，返回False让系统创建新ID
+        return False
+
+
 def get_user_data():
-    global CURRENT_USER
+    global CURRENT_USER, USER_DATA
     CURRENT_USER = (CURRENT_USER + 1) % USER_NUM
     print(f"使用配置 {CURRENT_USER+1}")
     
     # Akiru uzantajn datumojn
-    session, cookies, session_token, conversation_id, model_map = USER_DATA[CURRENT_USER]
+    session, cookies, session_token, conversation_id, model_map, user_index = USER_DATA[CURRENT_USER]
     
     # Kontrolu ĉu la tokeno eksvalidiĝis, se jes, refreŝigu ĝin
     if is_token_expired(session_token):
@@ -311,13 +438,54 @@ def get_user_data():
         new_token = refresh_token(session, cookies)
         if new_token:
             # Ĝisdatigu la globale konservitan tokenon
-            USER_DATA[CURRENT_USER] = (session, cookies, new_token, conversation_id, model_map)
+            USER_DATA[CURRENT_USER] = (session, cookies, new_token, conversation_id, model_map, user_index)
             session_token = new_token
             print(f"成功更新token: {session_token[:15]}...{session_token[-15:]}")
         else:
             print(f"警告：无法刷新Cookie {CURRENT_USER+1}的token，继续使用当前token")
     
-    return (session, cookies, session_token, conversation_id, model_map)
+    return (session, cookies, session_token, conversation_id, model_map, user_index)
+
+
+def get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index):
+    """获取有效的会话ID，如果无效则创建新会话"""
+    # 如果conversation_id为None或为空字符串，直接创建新会话
+    if not conversation_id:
+        print("会话ID为空，将创建新会话")
+        need_create = True
+    else:
+        # 检查现有会话ID是否有效
+        need_create = not is_conversation_valid(session, cookies, session_token, conversation_id, model_map, model)
+        if need_create:
+            print(f"会话ID {conversation_id} 无效，将创建新会话")
+    
+    # 如果需要创建新会话
+    if need_create:
+        if model in model_map and len(model_map[model]) >= 2:
+            external_app_id = model_map[model][0]
+            # 创建会话时需要deployment_id，我们先使用一个固定值
+            # 在实际应用中应从API响应中获取
+            deployment_id = "14b2a314cc"  # 这是从您提供的请求中获取的
+            
+            new_conversation_id = create_conversation(
+                session, cookies, session_token, 
+                external_application_id=external_app_id,
+                deployment_id=deployment_id
+            )
+            
+            if new_conversation_id:
+                # 更新全局存储的会话ID
+                global USER_DATA, CURRENT_USER
+                session, cookies, session_token, _, model_map, _ = USER_DATA[CURRENT_USER]
+                USER_DATA[CURRENT_USER] = (session, cookies, session_token, new_conversation_id, model_map, user_index)
+                
+                # 保存到配置文件
+                update_conversation_id(user_index, new_conversation_id)
+                
+                return new_conversation_id
+    
+    # 如果无法创建，返回原始ID
+    return conversation_id
 
 
 def generate_trace_id():
@@ -329,7 +497,11 @@ def generate_trace_id():
 
 def send_message(message, model, think=False):
     """Flua traktado kaj plusendo de mesaĝoj"""
-    (session, cookies, session_token, conversation_id, model_map) = get_user_data()
+    (session, cookies, session_token, conversation_id, model_map, user_index) = get_user_data()
+    
+    # 确保有有效的会话ID
+    conversation_id = get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index)
+    
     trace_id, sentry_trace = generate_trace_id()
     
     headers = {
@@ -443,7 +615,11 @@ def send_message(message, model, think=False):
 
 def send_message_non_stream(message, model, think=False):
     """Ne-flua traktado de mesaĝoj"""
-    (session, cookies, session_token, conversation_id, model_map) = get_user_data()
+    (session, cookies, session_token, conversation_id, model_map, user_index) = get_user_data()
+    
+    # 确保有有效的会话ID
+    conversation_id = get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index)
+    
     trace_id, sentry_trace = generate_trace_id()
     
     headers = {

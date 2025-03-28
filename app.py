@@ -30,13 +30,25 @@ USER_NUM = 0
 USER_DATA = []
 CURRENT_USER = -1
 MODELS = set()
+LAST_CONVERSATION_ID = None  # Konservas la lastan konversacian ID
+DELETE_CHAT = True  # Ĉu aŭtomate forigi la lastan konversacion post peto
 
 
 def resolve_config():
-    with open("config.json", "r") as f:
-        config = json.load(f)
-    config_list = config.get("config")
-    return config_list
+    try:
+        with open("config.json", "r") as f:
+            config = json.load(f)
+        config_list = config.get("config")
+        
+        # Legu la agordon delete_chat
+        global DELETE_CHAT
+        DELETE_CHAT = config.get("delete_chat", True)
+        print(f"Legis agordon por aŭtomata forigo de malnovaj konversacioj: {'aktiva' if DELETE_CHAT else 'malaktiva'}")
+        
+        return config_list
+    except FileNotFoundError:
+        print("未找到配置文件 config.json，请运行 python config_editor.py 配置cookie")
+        exit(1)
 
 
 def get_password():
@@ -195,7 +207,7 @@ def get_model_map(session, cookies, session_token):
 
 
 def save_config(config_data):
-    """保存配置到文件"""
+    """Konservi agordon al dosiero"""
     try:
         with open("config.json", "w") as f:
             json.dump(config_data, f, indent=4)
@@ -206,19 +218,8 @@ def save_config(config_data):
 
 
 def update_conversation_id(user_index, conversation_id):
-    """更新用户的conversation_id并保存到配置文件"""
-    try:
-        with open("config.json", "r") as f:
-            config = json.load(f)
-        
-        if "config" in config and user_index < len(config["config"]):
-            config["config"][user_index]["conversation_id"] = conversation_id
-            save_config(config)
-            print(f"已将用户 {user_index+1} 的conversation_id更新为: {conversation_id}")
-        else:
-            print(f"更新conversation_id失败: 配置文件格式错误或用户索引越界")
-    except Exception as e:
-        print(f"更新conversation_id失败: {e}")
+    """Ĝisdatigi la konversacian ID de uzanto"""
+    pass  # 不再输出日志
 
 
 def init_session():
@@ -231,7 +232,8 @@ def init_session():
     for i in range(user_num):
         user = config_list[i]
         cookies = user.get("cookies")
-        conversation_id = user.get("conversation_id")  # 从配置中读取，可能为None
+        # Ne plu legu konversacian ID el agordo, ĉiam agordu al Nenio
+        conversation_id = None
         session = requests.Session()
         
         session_token = refresh_token(session, cookies)
@@ -242,7 +244,7 @@ def init_session():
         try:
             model_map, models_set = get_model_map(session, cookies, session_token)
             all_models.update(models_set)
-            USER_DATA.append((session, cookies, session_token, conversation_id, model_map, i))  # 保存用户的索引
+            USER_DATA.append((session, cookies, session_token, conversation_id, model_map, i))
         except Exception as e:
             print(f"配置用户 {i+1} 失败: {e}")
             continue
@@ -314,6 +316,11 @@ def chat_completions():
     think = (
         openai_request.get("think", False) if model == "Claude Sonnet 3.7" else False
     )
+    
+    # Akiru parametron por kontroli ĉu forigi konversaciojn
+    global DELETE_CHAT
+    DELETE_CHAT = openai_request.get("delete_chat", True)
+    
     return (
         send_message(message, model, think)
         if stream
@@ -322,9 +329,9 @@ def chat_completions():
 
 
 def create_conversation(session, cookies, session_token, external_application_id=None, deployment_id=None):
-    """创建新的会话"""
+    """Krei novan konversacion"""
     if not (external_application_id and deployment_id):
-        print("无法创建新会话: 缺少必要参数")
+        print("无法创建新会话: 缺少必要参数")  # Ne povas krei novan konversacion: Mankas necesaj parametroj
         return None
     
     headers = {
@@ -357,28 +364,27 @@ def create_conversation(session, cookies, session_token, external_application_id
             if data.get("success", False):
                 new_conversation_id = data.get("result", {}).get("deploymentConversationId")
                 if new_conversation_id:
-                    print(f"成功创建新的conversation: {new_conversation_id}")
                     return new_conversation_id
         
-        print(f"创建会话失败: {response.status_code} - {response.text[:100]}")
+        print(f"创建会话失败: {response.status_code} - {response.text[:100]}")  # Malsukcesis krei konversacion: {response.status_code} - {response.text[:100]}
         return None
     except Exception as e:
-        print(f"创建会话时出错: {e}")
+        print(f"创建会话时出错: {e}")  # Eraro dum kreado de konversacio: {e}
         return None
 
 
 def is_conversation_valid(session, cookies, session_token, conversation_id, model_map, model):
-    """检查会话ID是否有效"""
+    """Kontroli ĉu konversacia ID estas valida"""
     if not conversation_id:
         return False
     
-    # 如果没有这些信息，无法验证
+    # Se ne havas ĉi tiujn informojn, ne povas validigi
     if not (model in model_map and len(model_map[model]) >= 2):
         return False
         
     external_app_id = model_map[model][0]
     
-    # 尝试发送一个空消息来测试会话ID是否有效
+    # Provu sendi malplenan mesaĝon por testi ĉu la konversacia ID estas valida
     headers = {
         "accept": "text/event-stream",
         "content-type": "text/plain;charset=UTF-8",
@@ -392,7 +398,7 @@ def is_conversation_valid(session, cookies, session_token, conversation_id, mode
     payload = {
         "requestId": str(uuid.uuid4()),
         "deploymentConversationId": conversation_id,
-        "message": "",  # 空消息
+        "message": "",  # Malplena mesaĝo
         "isDesktop": False,
         "externalApplicationId": external_app_id
     }
@@ -405,7 +411,7 @@ def is_conversation_valid(session, cookies, session_token, conversation_id, mode
             stream=False
         )
         
-        # 即使返回错误，只要不是缺少ID的错误，也说明ID是有效的
+        # Eĉ se revenis eraro, nur se ne estas "mankas parametro" eraro, la ID ankoraŭ validas
         if response.status_code == 200:
             return True
         
@@ -413,55 +419,89 @@ def is_conversation_valid(session, cookies, session_token, conversation_id, mode
         if "Missing required parameter" in error_text:
             return False
             
-        # 其他类型的错误，可能ID是有效的但有其他问题
+        # Aliaj eraroj, eble la ID validas sed havas aliajn problemojn
         return True
     except:
-        # 如果请求出错，无法确定，返回False让系统创建新ID
+        # Se okazis peto-eraro, ni ne povas certigi, revenu False por krei novan ID
         return False
 
 
 def get_user_data():
     global CURRENT_USER, USER_DATA
     CURRENT_USER = (CURRENT_USER + 1) % USER_NUM
-    print(f"使用配置 {CURRENT_USER+1}")
+    print(f"使用配置 {CURRENT_USER+1}")  # Uzas agordon {CURRENT_USER+1}
     
     # Akiru uzantajn datumojn
     session, cookies, session_token, conversation_id, model_map, user_index = USER_DATA[CURRENT_USER]
     
     # Kontrolu ĉu la tokeno eksvalidiĝis, se jes, refreŝigu ĝin
     if is_token_expired(session_token):
-        print(f"Cookie {CURRENT_USER+1}的token已过期或即将过期，正在刷新...")
+        print(f"Cookie {CURRENT_USER+1}的token已过期或即将过期，正在刷新...")  # Tokeno por kuketo {CURRENT_USER+1} eksvalidiĝis aŭ baldaŭ eksvalidiĝos, refreŝigante...
         new_token = refresh_token(session, cookies)
         if new_token:
             # Ĝisdatigu la globale konservitan tokenon
             USER_DATA[CURRENT_USER] = (session, cookies, new_token, conversation_id, model_map, user_index)
             session_token = new_token
-            print(f"成功更新token: {session_token[:15]}...{session_token[-15:]}")
+            print(f"成功更新token: {session_token[:15]}...{session_token[-15:]}")  # Sukcese ĝisdatigis tokenon: {session_token[:15]}...{session_token[-15:]}
         else:
-            print(f"警告：无法刷新Cookie {CURRENT_USER+1}的token，继续使用当前token")
+            print(f"警告：无法刷新Cookie {CURRENT_USER+1}的token，继续使用当前token")  # Averto: Ne povis refreŝigi tokenon por kuketo {CURRENT_USER+1}, daŭrigante kun nuna tokeno
     
     return (session, cookies, session_token, conversation_id, model_map, user_index)
 
 
-def get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index):
-    """获取有效的会话ID，如果无效则创建新会话"""
-    # 如果conversation_id为None或为空字符串，直接创建新会话
+def delete_conversation(session, cookies, session_token, conversation_id):
+    """Forigi konversacion"""
     if not conversation_id:
-        print("会话ID为空，将创建新会话")
-        need_create = True
-    else:
-        # 检查现有会话ID是否有效
-        need_create = not is_conversation_valid(session, cookies, session_token, conversation_id, model_map, model)
-        if need_create:
-            print(f"会话ID {conversation_id} 无效，将创建新会话")
+        return
     
-    # 如果需要创建新会话
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "content-type": "application/json",
+        "cookie": cookies,
+        "user-agent": random.choice(USER_AGENTS),
+        "x-abacus-org-host": "apps"
+    }
+    
+    if session_token:
+        headers["session-token"] = session_token
+    
+    delete_payload = {
+        "deploymentId": "14b2a314cc",
+        "deploymentConversationId": conversation_id
+    }
+    
+    try:
+        response = requests.post(
+            "https://apps.abacus.ai/api/deleteDeploymentConversation",
+            headers=headers,
+            json=delete_payload
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if not data.get("success", False):
+                print(f"删除会话失败: {data.get('error', '未知错误')}")  # Malsukcesis forigi konversacion: {data.get('error', 'Nekonata eraro')}
+        else:
+            print(f"删除会话失败，状态码: {response.status_code}")  # Malsukcesis forigi konversacion, stata kodo: {response.status_code}
+    except Exception as e:
+        print(f"删除会话时出错: {e}")  # Eraro dum forigo de konversacio: {e}
+
+
+def get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index):
+    """Akiri aŭ krei validan konversacian ID"""
+    global LAST_CONVERSATION_ID
+    
+    # Ĉiam krei novan konversacion
+    need_create = True
+    
+    # Se necesas krei novan konversacion
     if need_create:
         if model in model_map and len(model_map[model]) >= 2:
             external_app_id = model_map[model][0]
-            # 创建会话时需要deployment_id，我们先使用一个固定值
-            # 在实际应用中应从API响应中获取
-            deployment_id = "14b2a314cc"  # 这是从您提供的请求中获取的
+            # Necesas deployment_id por krei konversacion, ni uzas fiksan valoron
+            # En reala aplikaĵo, ĝi devus veni el API respondo
+            deployment_id = "14b2a314cc"  # Ĉi tio venas de la provizita peto
             
             new_conversation_id = create_conversation(
                 session, cookies, session_token, 
@@ -470,17 +510,17 @@ def get_or_create_conversation(session, cookies, session_token, conversation_id,
             )
             
             if new_conversation_id:
-                # 更新全局存储的会话ID
+                # Ĝisdatigu la globale konservitan konversacian ID
                 global USER_DATA, CURRENT_USER
                 session, cookies, session_token, _, model_map, _ = USER_DATA[CURRENT_USER]
                 USER_DATA[CURRENT_USER] = (session, cookies, session_token, new_conversation_id, model_map, user_index)
                 
-                # 保存到配置文件
+                # Ne plu konservu al agordo-dosiero
                 update_conversation_id(user_index, new_conversation_id)
                 
                 return new_conversation_id
     
-    # 如果无法创建，返回原始ID
+    # Se ne povas krei, revenigu la originalan ID
     return conversation_id
 
 
@@ -493,9 +533,13 @@ def generate_trace_id():
 
 def send_message(message, model, think=False):
     """Flua traktado kaj plusendo de mesaĝoj"""
+    global LAST_CONVERSATION_ID
     (session, cookies, session_token, conversation_id, model_map, user_index) = get_user_data()
     
-    # 确保有有效的会话ID
+    # Konservu malnovan konversacian ID por posta forigo
+    old_conversation_id = conversation_id
+    
+    # Certigu, ke havas validan konversacian ID
     conversation_id = get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index)
     
     trace_id, sentry_trace = generate_trace_id()
@@ -594,7 +638,7 @@ def send_message(message, model, think=False):
                             if segment:
                                 yield f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [{'delta': {'content': segment}}]})}\n\n"
                     except Exception as e:
-                        print(f"处理响应出错: {e}")
+                        print(f"处理响应出错: {e}")  # Eraro dum pritraktado de respondo: {e}
             
             yield "data: " + json.dumps({"object": "chat.completion.chunk", "choices": [{"delta": {}, "finish_reason": "stop"}]}) + "\n\n"
             yield "data: [DONE]\n\n"
@@ -605,15 +649,25 @@ def send_message(message, model, think=False):
         if hasattr(e, 'response') and e.response is not None:
             if hasattr(e.response, 'text'):
                 error_details += f" - Response: {e.response.text[:200]}"
-        print(f"发送消息失败: {error_details}")
+        print(f"发送消息失败: {error_details}")  # Malsukcesis sendi mesaĝon: {error_details}
         return jsonify({"error": f"Failed to send message: {error_details}"}), 500
+    finally:
+        # Post fino de peto, se necesas forigi antaŭan konversacion kaj ĝi ekzistas
+        if DELETE_CHAT and LAST_CONVERSATION_ID and LAST_CONVERSATION_ID != conversation_id:
+            delete_conversation(session, cookies, session_token, LAST_CONVERSATION_ID)
+        # Ĝisdatigu la lastan konversacian ID al nuna ID
+        LAST_CONVERSATION_ID = conversation_id
 
 
 def send_message_non_stream(message, model, think=False):
     """Ne-flua traktado de mesaĝoj"""
+    global LAST_CONVERSATION_ID
     (session, cookies, session_token, conversation_id, model_map, user_index) = get_user_data()
     
-    # 确保有有效的会话ID
+    # Konservu malnovan konversacian ID por posta forigo
+    old_conversation_id = conversation_id
+    
+    # Certigu, ke havas validan konversacian ID
     conversation_id = get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index)
     
     trace_id, sentry_trace = generate_trace_id()
@@ -705,7 +759,7 @@ def send_message_non_stream(message, model, think=False):
                             segment = data.get("segment", "")
                             buffer.write(segment)
                     except json.JSONDecodeError as e:
-                        print(f"解析响应出错: {e}")
+                        print(f"解析响应出错: {e}")  # Eraro dum analizo de respondo: {e}
         else:
             for line in response.iter_lines():
                 if line:
@@ -715,7 +769,7 @@ def send_message_non_stream(message, model, think=False):
                         if segment:
                             buffer.write(segment)
                     except Exception as e:
-                        print(f"处理响应出错: {e}")
+                        print(f"处理响应出错: {e}")  # Eraro dum pritraktado de respondo: {e}
         
         openai_response = {
             "id": "chatcmpl-" + str(uuid.uuid4()),
@@ -735,8 +789,14 @@ def send_message_non_stream(message, model, think=False):
         error_details = str(e)
         if isinstance(e, requests.exceptions.RequestException) and e.response is not None:
             error_details += f" - Response: {e.response.text[:200]}"
-        print(f"发送消息失败: {error_details}")
+        print(f"发送消息失败: {error_details}")  # Malsukcesis sendi mesaĝon: {error_details}
         return jsonify({"error": f"Failed to send message: {error_details}"}), 500
+    finally:
+        # Post fino de peto, se necesas forigi antaŭan konversacion kaj ĝi ekzistas
+        if DELETE_CHAT and LAST_CONVERSATION_ID and LAST_CONVERSATION_ID != conversation_id:
+            delete_conversation(session, cookies, session_token, LAST_CONVERSATION_ID)
+        # Ĝisdatigu la lastan konversacian ID al nuna ID
+        LAST_CONVERSATION_ID = conversation_id
 
 
 def format_message(messages):
@@ -767,7 +827,7 @@ def extract_role(messages):
         <roleInfo>\s*
         user:\s*(?P<user>[^\n]*)\s*
         assistant:\s*(?P<assistant>[^\n]*)\s*
-        system:\s*(?P<system>[^\n]*)\s*
+        system:\s*(?P<s>[^\n]*)\s*
         prefix:\s*(?P<prefix>[^\n]*)\s*
         </roleInfo>\n
     """,

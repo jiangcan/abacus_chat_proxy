@@ -18,6 +18,7 @@ MODEL_LIST_URL = "https://abacus.ai/api/v0/listExternalApplications"
 CHAT_URL = "https://apps.abacus.ai/api/_chatLLMSendMessageSSE"
 USER_INFO_URL = "https://abacus.ai/api/v0/_getUserInfo"
 CREATE_CONVERSATION_URL = "https://apps.abacus.ai/api/createDeploymentConversation"
+GET_CONVERSATION_URL = "https://apps.abacus.ai/api/getDeploymentConversation"
 
 
 USER_AGENTS = [
@@ -488,6 +489,98 @@ def delete_conversation(session, cookies, session_token, conversation_id):
         print(f"删除会话时出错: {e}")  # Eraro dum forigo de konversacio: {e}
 
 
+def get_conversation_history(session, cookies, session_token, conversation_id, message=None):
+    """获取对话历史记录
+    
+    Args:
+        session: 请求会话
+        cookies: Cookie字符串
+        session_token: 会话令牌
+        conversation_id: 对话ID
+        message: 如果提供，会检查历史记录中是否包含此消息（用于验证最新消息是否已加入历史）
+    """
+    if not conversation_id:
+        return None
+    
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "content-type": "application/json",
+        "cookie": cookies,
+        "user-agent": random.choice(USER_AGENTS),
+        "x-abacus-org-host": "apps"
+    }
+    
+    if session_token:
+        headers["session-token"] = session_token
+    
+    get_conversation_payload = {
+        "deploymentConversationId": conversation_id
+    }
+    
+    # 添加重试机制，因为有时候服务器需要一点时间来更新对话历史
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = session.post(
+                GET_CONVERSATION_URL,
+                headers=headers,
+                json=get_conversation_payload
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success", False):
+                    result = data.get("result", {})
+                    history = result.get("history", [])
+                    
+                    # 验证历史记录是否存在
+                    if len(history) > 0:
+                        # 如果提供了消息，检查是否包含该消息
+                        if message:
+                            # 查找最近的用户消息是否匹配
+                            for item in reversed(history):
+                                if item.get("role") == "USER" and item.get("text") == message:
+                                    print(f"成功获取对话历史，包含最新消息，共 {len(history)} 条消息")
+                                    return result
+                            
+                            # 未找到匹配的消息
+                            if attempt < max_retries - 1:
+                                print(f"对话历史中未包含最新消息，重试中 ({attempt+1}/{max_retries})...")
+                                time.sleep(1.5)  # 等待1.5秒后重试
+                                continue
+                            else:
+                                print("已达到最大重试次数，但对话历史中未包含最新消息")
+                                return result
+                        else:
+                            # 未提供消息，只检查是否有历史记录
+                            print(f"成功获取对话历史，包含 {len(history)} 条消息")
+                            return result
+                    elif attempt < max_retries - 1:
+                        print(f"对话历史为空，重试中 ({attempt+1}/{max_retries})...")
+                        time.sleep(1.5)  # 等待1.5秒后重试
+                        continue
+                    else:
+                        print("已达到最大重试次数，但对话历史仍为空")
+                        return result
+                else:
+                    print(f"获取对话历史失败: {data.get('error', '未知错误')}")  # Malsukcesis akiri konversacian historion: {data.get('error', 'Nekonata eraro')}
+            else:
+                print(f"获取对话历史失败，状态码: {response.status_code}")  # Malsukcesis akiri konversacian historion, stata kodo: {response.status_code}
+                if attempt < max_retries - 1:
+                    print(f"重试中 ({attempt+1}/{max_retries})...")
+                    time.sleep(1.5)  # 等待1.5秒后重试
+                    continue
+        except Exception as e:
+            print(f"获取对话历史时出错: {e}")  # Eraro dum akiro de konversacia historio: {e}
+            if attempt < max_retries - 1:
+                print(f"重试中 ({attempt+1}/{max_retries})...")
+                time.sleep(1.5)  # 等待1.5秒后重试
+                continue
+    
+    return None
+
+
 def get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index):
     """Akiri aŭ krei validan konversacian ID"""
     global LAST_CONVERSATION_ID
@@ -547,7 +640,7 @@ def send_message(message, model, think=False):
     headers = {
         "accept": "text/event-stream",
         "accept-language": "zh-CN,zh;q=0.9",
-        "baggage": f"sentry-environment=production,sentry-release=975eec6685013679c139fc88db2c48e123d5c604,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
+        "baggage": f"sentry-environment=production,sentry-release=946244517de08b08598b94f18098411f5a5352d5,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
         "content-type": "text/plain;charset=UTF-8",
         "cookie": cookies,
         "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
@@ -557,11 +650,13 @@ def send_message(message, model, think=False):
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-origin",
         "sentry-trace": sentry_trace,
+        "session-token": session_token if session_token else "",
+        "x-abacus-org-host": "apps",
+        "referrer": "https://apps.abacus.ai/chatllm/",
+        "referrerPolicy": "strict-origin-when-cross-origin",
+        "credentials": "include",
         "user-agent": random.choice(USER_AGENTS)
     }
-    
-    if session_token:
-        headers["session-token"] = session_token
     
     payload = {
         "requestId": str(uuid.uuid4()),
@@ -573,9 +668,7 @@ def send_message(message, model, think=False):
             "language": "zh-CN"
         },
         "llmName": model_map[model][1],
-        "externalApplicationId": model_map[model][0],
-        "regenerate": True,
-        "editPrompt": True
+        "externalApplicationId": model_map[model][0]
     }
     
     if think:
@@ -642,6 +735,12 @@ def send_message(message, model, think=False):
             
             yield "data: " + json.dumps({"object": "chat.completion.chunk", "choices": [{"delta": {}, "finish_reason": "stop"}]}) + "\n\n"
             yield "data: [DONE]\n\n"
+            
+            # 处理旧会话
+            if DELETE_CHAT and LAST_CONVERSATION_ID and LAST_CONVERSATION_ID != conversation_id:
+                delete_conversation(session, cookies, session_token, LAST_CONVERSATION_ID)
+            # 更新最后一个会话ID
+            LAST_CONVERSATION_ID = conversation_id
         
         return Response(generate(), mimetype="text/event-stream")
     except requests.exceptions.RequestException as e:
@@ -651,12 +750,6 @@ def send_message(message, model, think=False):
                 error_details += f" - Response: {e.response.text[:200]}"
         print(f"发送消息失败: {error_details}")  # Malsukcesis sendi mesaĝon: {error_details}
         return jsonify({"error": f"Failed to send message: {error_details}"}), 500
-    finally:
-        # Post fino de peto, se necesas forigi antaŭan konversacion kaj ĝi ekzistas
-        if DELETE_CHAT and LAST_CONVERSATION_ID and LAST_CONVERSATION_ID != conversation_id:
-            delete_conversation(session, cookies, session_token, LAST_CONVERSATION_ID)
-        # Ĝisdatigu la lastan konversacian ID al nuna ID
-        LAST_CONVERSATION_ID = conversation_id
 
 
 def send_message_non_stream(message, model, think=False):
@@ -675,7 +768,7 @@ def send_message_non_stream(message, model, think=False):
     headers = {
         "accept": "text/event-stream",
         "accept-language": "zh-CN,zh;q=0.9",
-        "baggage": f"sentry-environment=production,sentry-release=975eec6685013679c139fc88db2c48e123d5c604,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
+        "baggage": f"sentry-environment=production,sentry-release=946244517de08b08598b94f18098411f5a5352d5,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
         "content-type": "text/plain;charset=UTF-8",
         "cookie": cookies,
         "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
@@ -685,11 +778,13 @@ def send_message_non_stream(message, model, think=False):
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-origin",
         "sentry-trace": sentry_trace,
+        "session-token": session_token if session_token else "",
+        "x-abacus-org-host": "apps",
+        "referrer": "https://apps.abacus.ai/chatllm/",
+        "referrerPolicy": "strict-origin-when-cross-origin",
+        "credentials": "include",
         "user-agent": random.choice(USER_AGENTS)
     }
-    
-    if session_token:
-        headers["session-token"] = session_token
     
     payload = {
         "requestId": str(uuid.uuid4()),
@@ -701,9 +796,7 @@ def send_message_non_stream(message, model, think=False):
             "language": "zh-CN"
         },
         "llmName": model_map[model][1],
-        "externalApplicationId": model_map[model][0],
-        "regenerate": True,
-        "editPrompt": True
+        "externalApplicationId": model_map[model][0]
     }
     
     if think:
@@ -784,6 +877,13 @@ def send_message_non_stream(message, model, think=False):
                 }
             ],
         }
+        
+        # 处理旧会话
+        if DELETE_CHAT and LAST_CONVERSATION_ID and LAST_CONVERSATION_ID != conversation_id:
+            delete_conversation(session, cookies, session_token, LAST_CONVERSATION_ID)
+        # 更新最后一个会话ID
+        LAST_CONVERSATION_ID = conversation_id
+        
         return jsonify(openai_response)
     except Exception as e:
         error_details = str(e)
@@ -791,12 +891,6 @@ def send_message_non_stream(message, model, think=False):
             error_details += f" - Response: {e.response.text[:200]}"
         print(f"发送消息失败: {error_details}")  # Malsukcesis sendi mesaĝon: {error_details}
         return jsonify({"error": f"Failed to send message: {error_details}"}), 500
-    finally:
-        # Post fino de peto, se necesas forigi antaŭan konversacion kaj ĝi ekzistas
-        if DELETE_CHAT and LAST_CONVERSATION_ID and LAST_CONVERSATION_ID != conversation_id:
-            delete_conversation(session, cookies, session_token, LAST_CONVERSATION_ID)
-        # Ĝisdatigu la lastan konversacian ID al nuna ID
-        LAST_CONVERSATION_ID = conversation_id
 
 
 def format_message(messages):

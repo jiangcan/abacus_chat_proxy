@@ -45,6 +45,7 @@ def resolve_config():
         global DELETE_CHAT
         DELETE_CHAT = config.get("delete_chat", True)
         print(f"Legis agordon por aŭtomata forigo de malnovaj konversacioj: {'aktiva' if DELETE_CHAT else 'malaktiva'}")
+        print(f"根据配置文件，{'启用' if DELETE_CHAT else '禁用'}自动删除旧会话")
         
         return config_list
     except FileNotFoundError:
@@ -318,14 +319,21 @@ def chat_completions():
         openai_request.get("think", False) if model == "Claude Sonnet 3.7" else False
     )
     
+    # 获取regenerate和edit_prompt参数
+    regenerate = openai_request.get("regenerate", False)
+    edit_prompt = openai_request.get("edit_prompt", False)
+    
     # Akiru parametron por kontroli ĉu forigi konversaciojn
     global DELETE_CHAT
-    DELETE_CHAT = openai_request.get("delete_chat", True)
+    # 如果请求中提供了delete_chat参数，使用该参数值，否则保持config.json中的默认值
+    if "delete_chat" in openai_request:
+        DELETE_CHAT = openai_request.get("delete_chat", True)
+        print(f"根据请求参数，设置delete_chat为: {'启用' if DELETE_CHAT else '禁用'}")
     
     return (
-        send_message(message, model, think)
+        send_message(message, model, think, regenerate, edit_prompt)
         if stream
-        else send_message_non_stream(message, model, think)
+        else send_message_non_stream(message, model, think, regenerate, edit_prompt)
     )
 
 
@@ -335,17 +343,26 @@ def create_conversation(session, cookies, session_token, external_application_id
         print("无法创建新会话: 缺少必要参数")  # Ne povas krei novan konversacion: Mankas necesaj parametroj
         return None
     
+    trace_id, sentry_trace = generate_trace_id()
+    
     headers = {
         "accept": "application/json, text/plain, */*",
         "accept-language": "zh-CN,zh;q=0.9",
+        "baggage": f"sentry-environment=production,sentry-release=a869e29e815aefa769a7e9c6cb235ea2638e1fe2,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
         "content-type": "application/json",
         "cookie": cookies,
+        "reai-ui": "1",
+        "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "sentry-trace": sentry_trace,
+        "session-token": session_token,
         "user-agent": random.choice(USER_AGENTS),
         "x-abacus-org-host": "apps"
     }
-    
-    if session_token:
-        headers["session-token"] = session_token
     
     create_payload = {
         "deploymentId": deployment_id,
@@ -455,17 +472,26 @@ def delete_conversation(session, cookies, session_token, conversation_id):
     if not conversation_id:
         return
     
+    trace_id, sentry_trace = generate_trace_id()
+    
     headers = {
         "accept": "application/json, text/plain, */*",
         "accept-language": "zh-CN,zh;q=0.9",
+        "baggage": f"sentry-environment=production,sentry-release=a869e29e815aefa769a7e9c6cb235ea2638e1fe2,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
         "content-type": "application/json",
         "cookie": cookies,
+        "reai-ui": "1",
+        "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "sentry-trace": sentry_trace,
+        "session-token": session_token,
         "user-agent": random.choice(USER_AGENTS),
         "x-abacus-org-host": "apps"
     }
-    
-    if session_token:
-        headers["session-token"] = session_token
     
     delete_payload = {
         "deploymentId": "14b2a314cc",
@@ -473,7 +499,7 @@ def delete_conversation(session, cookies, session_token, conversation_id):
     }
     
     try:
-        response = requests.post(
+        response = session.post(
             "https://apps.abacus.ai/api/deleteDeploymentConversation",
             headers=headers,
             json=delete_payload
@@ -481,7 +507,9 @@ def delete_conversation(session, cookies, session_token, conversation_id):
         
         if response.status_code == 200:
             data = response.json()
-            if not data.get("success", False):
+            if data.get("success", True):
+                print(f"成功删除会话ID: {conversation_id}")
+            else:
                 print(f"删除会话失败: {data.get('error', '未知错误')}")  # Malsukcesis forigi konversacion: {data.get('error', 'Nekonata eraro')}
         else:
             print(f"删除会话失败，状态码: {response.status_code}")  # Malsukcesis forigi konversacion, stata kodo: {response.status_code}
@@ -583,13 +611,23 @@ def get_conversation_history(session, cookies, session_token, conversation_id, m
 
 def get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index):
     """Akiri aŭ krei validan konversacian ID"""
-    global LAST_CONVERSATION_ID
+    global LAST_CONVERSATION_ID, DELETE_CHAT
     
-    # Ĉiam krei novan konversacion
-    need_create = True
+    # 如果配置为删除旧会话，则先删除
+    if DELETE_CHAT and conversation_id:
+        print(f"根据配置，删除旧会话ID: {conversation_id}")
+        delete_conversation(session, cookies, session_token, conversation_id)
+        # 删除后将conversation_id设置为None，强制创建新会话
+        old_conversation_id = conversation_id
+        conversation_id = None
+    elif not DELETE_CHAT and conversation_id:
+        print(f"根据配置，保留旧会话ID: {conversation_id}")
+        old_conversation_id = conversation_id
+    else:
+        old_conversation_id = None
     
-    # Se necesas krei novan konversacion
-    if need_create:
+    # 创建新会话（如果没有有效的会话ID）
+    if not conversation_id:
         if model in model_map and len(model_map[model]) >= 2:
             external_app_id = model_map[model][0]
             # Necesas deployment_id por krei konversacion, ni uzas fiksan valoron
@@ -612,8 +650,15 @@ def get_or_create_conversation(session, cookies, session_token, conversation_id,
                 update_conversation_id(user_index, new_conversation_id)
                 
                 return new_conversation_id
+            else:
+                # 如果创建新会话失败，并且有旧会话ID，则继续使用旧会话ID
+                if old_conversation_id:
+                    print(f"创建新会话失败，继续使用旧会话ID: {old_conversation_id}")
+                    # 恢复旧会话ID到用户数据中
+                    USER_DATA[CURRENT_USER] = (session, cookies, session_token, old_conversation_id, model_map, user_index)
+                    return old_conversation_id
     
-    # Se ne povas krei, revenigu la originalan ID
+    # 返回现有会话ID
     return conversation_id
 
 
@@ -624,23 +669,23 @@ def generate_trace_id():
     return trace_id, sentry_trace
 
 
-def send_message(message, model, think=False):
+def send_message(message, model, think=False, regenerate=False, edit_prompt=False):
     """Flua traktado kaj plusendo de mesaĝoj"""
     global LAST_CONVERSATION_ID
     (session, cookies, session_token, conversation_id, model_map, user_index) = get_user_data()
     
-    # Konservu malnovan konversacian ID por posta forigo
-    old_conversation_id = conversation_id
-    
-    # Certigu, ke havas validan konversacian ID
+    # 确保有有效的对话ID
     conversation_id = get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index)
+    
+    # 更新最后一个会话ID
+    LAST_CONVERSATION_ID = conversation_id
     
     trace_id, sentry_trace = generate_trace_id()
     
     headers = {
         "accept": "text/event-stream",
         "accept-language": "zh-CN,zh;q=0.9",
-        "baggage": f"sentry-environment=production,sentry-release=946244517de08b08598b94f18098411f5a5352d5,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
+        "baggage": f"sentry-environment=production,sentry-release=a869e29e815aefa769a7e9c6cb235ea2638e1fe2,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
         "content-type": "text/plain;charset=UTF-8",
         "cookie": cookies,
         "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
@@ -652,7 +697,7 @@ def send_message(message, model, think=False):
         "sentry-trace": sentry_trace,
         "session-token": session_token if session_token else "",
         "x-abacus-org-host": "apps",
-        "referrer": "https://apps.abacus.ai/chatllm/",
+        "referrer": f"https://apps.abacus.ai/chatllm/?appId={model_map[model][0]}&convoId={conversation_id}",
         "referrerPolicy": "strict-origin-when-cross-origin",
         "credentials": "include",
         "user-agent": random.choice(USER_AGENTS)
@@ -673,6 +718,12 @@ def send_message(message, model, think=False):
     
     if think:
         payload["useThinking"] = think
+    
+    if regenerate:
+        payload["regenerate"] = True
+        
+    if edit_prompt:
+        payload["editPrompt"] = True
     
     try:
         response = session.post(
@@ -697,6 +748,7 @@ def send_message(message, model, think=False):
                 return ""
         
         def generate():
+            global LAST_CONVERSATION_ID
             id = ""
             think_state = 2
             
@@ -743,32 +795,34 @@ def send_message(message, model, think=False):
             LAST_CONVERSATION_ID = conversation_id
         
         return Response(generate(), mimetype="text/event-stream")
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         error_details = str(e)
-        if hasattr(e, 'response') and e.response is not None:
-            if hasattr(e.response, 'text'):
-                error_details += f" - Response: {e.response.text[:200]}"
+        if isinstance(e, requests.exceptions.RequestException) and e.response is not None:
+            error_details += f" - Response: {e.response.text[:200]}"
         print(f"发送消息失败: {error_details}")  # Malsukcesis sendi mesaĝon: {error_details}
+        print(f"错误类型: {type(e).__name__}")  # 添加错误类型信息
+        import traceback
+        print(f"错误堆栈: {traceback.format_exc()}")  # 添加错误堆栈信息
         return jsonify({"error": f"Failed to send message: {error_details}"}), 500
 
 
-def send_message_non_stream(message, model, think=False):
+def send_message_non_stream(message, model, think=False, regenerate=False, edit_prompt=False):
     """Ne-flua traktado de mesaĝoj"""
     global LAST_CONVERSATION_ID
     (session, cookies, session_token, conversation_id, model_map, user_index) = get_user_data()
     
-    # Konservu malnovan konversacian ID por posta forigo
-    old_conversation_id = conversation_id
-    
-    # Certigu, ke havas validan konversacian ID
+    # 确保有有效的对话ID
     conversation_id = get_or_create_conversation(session, cookies, session_token, conversation_id, model_map, model, user_index)
+    
+    # 更新最后一个会话ID
+    LAST_CONVERSATION_ID = conversation_id
     
     trace_id, sentry_trace = generate_trace_id()
     
     headers = {
         "accept": "text/event-stream",
         "accept-language": "zh-CN,zh;q=0.9",
-        "baggage": f"sentry-environment=production,sentry-release=946244517de08b08598b94f18098411f5a5352d5,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
+        "baggage": f"sentry-environment=production,sentry-release=a869e29e815aefa769a7e9c6cb235ea2638e1fe2,sentry-public_key=3476ea6df1585dd10e92cdae3a66ff49,sentry-trace_id={trace_id}",
         "content-type": "text/plain;charset=UTF-8",
         "cookie": cookies,
         "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
@@ -780,7 +834,7 @@ def send_message_non_stream(message, model, think=False):
         "sentry-trace": sentry_trace,
         "session-token": session_token if session_token else "",
         "x-abacus-org-host": "apps",
-        "referrer": "https://apps.abacus.ai/chatllm/",
+        "referrer": f"https://apps.abacus.ai/chatllm/?appId={model_map[model][0]}&convoId={conversation_id}",
         "referrerPolicy": "strict-origin-when-cross-origin",
         "credentials": "include",
         "user-agent": random.choice(USER_AGENTS)
@@ -801,6 +855,12 @@ def send_message_non_stream(message, model, think=False):
     
     if think:
         payload["useThinking"] = think
+        
+    if regenerate:
+        payload["regenerate"] = True
+        
+    if edit_prompt:
+        payload["editPrompt"] = True
     
     try:
         response = session.post(
@@ -878,18 +938,15 @@ def send_message_non_stream(message, model, think=False):
             ],
         }
         
-        # 处理旧会话
-        if DELETE_CHAT and LAST_CONVERSATION_ID and LAST_CONVERSATION_ID != conversation_id:
-            delete_conversation(session, cookies, session_token, LAST_CONVERSATION_ID)
-        # 更新最后一个会话ID
-        LAST_CONVERSATION_ID = conversation_id
-        
         return jsonify(openai_response)
     except Exception as e:
         error_details = str(e)
         if isinstance(e, requests.exceptions.RequestException) and e.response is not None:
             error_details += f" - Response: {e.response.text[:200]}"
         print(f"发送消息失败: {error_details}")  # Malsukcesis sendi mesaĝon: {error_details}
+        print(f"错误类型: {type(e).__name__}")  # 添加错误类型信息
+        import traceback
+        print(f"错误堆栈: {traceback.format_exc()}")  # 添加错误堆栈信息
         return jsonify({"error": f"Failed to send message: {error_details}"}), 500
 
 

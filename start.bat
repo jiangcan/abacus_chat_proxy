@@ -20,7 +20,7 @@ if errorlevel 1 (
 )
 
 echo checking venv module...
-python -m venv venv
+python -m venv .venv
 if errorlevel 1 (
     echo No venv module found. Please upgrade your python to 3.3+.
     pause
@@ -28,7 +28,7 @@ if errorlevel 1 (
 )
 
 echo activating virtual environment...
-call venv\Scripts\activate.bat
+call .venv\Scripts\activate.bat
 if errorlevel 1 (
  echo Failed to activate virtual environment, trying to install dependencies in global environment...
  goto install_dependencies
